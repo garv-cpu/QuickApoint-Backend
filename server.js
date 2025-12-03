@@ -3,7 +3,8 @@
 import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
-
+import cron from "node-cron";
+import axios from "axios";
 //---------------------------------------------------------------
 // INIT
 //---------------------------------------------------------------
@@ -191,6 +192,14 @@ app.post("/api/join-queue", async (req, res) => {
   }
 });
 
+cron.schedule("*/10 * * * *", async () => {
+  try {
+    await axios.get(process.env.RENDER_BACKEND_URL || "https://quickapoint-backend.onrender.com");
+    console.log("🔥 Cron Ping Sent To Keep Server Awake");
+  } catch (err) {
+    console.log("Cron Ping Failed", err.message);
+  }
+});
 
 //---------------------------------------------------------------
 // SERVER START
