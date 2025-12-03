@@ -194,7 +194,7 @@ app.post("/api/join-queue", async (req, res) => {
 
 cron.schedule("*/10 * * * *", async () => {
   try {
-    await axios.get(process.env.RENDER_BACKEND_URL || "https://quickapoint-backend.onrender.com");
+    await axios.get(process.env.RENDER_BACKEND_URL);
     console.log("🔥 Cron Ping Sent To Keep Server Awake");
   } catch (err) {
     console.log("Cron Ping Failed", err.message);
