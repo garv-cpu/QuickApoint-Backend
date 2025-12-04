@@ -102,7 +102,7 @@ const TokenCounter = mongoose.model("TokenCounter", TokenCounterSchema);
 
 //ADMIN
 // GET /admin/stats
-app.get("/admin/stats", async (req, res) => {
+app.get("/admin/stats", verifyToken, allowRoles("admin"), async (req, res) => {
   try {
     const doctorCount = await Doctor.countDocuments();
     const appointmentCount = await Appointment.countDocuments();
@@ -132,10 +132,10 @@ app.get("/api/auth/role", async (req, res) => {
     // get role from Firestore
     const snap = await admin.firestore().collection("users").doc(uid).get();
 
-    if (!snap.exists)
-      return res.json({ role: "user" }); // fallback
+    if (!snap.exists())
+      return res.json({ role: "user" });
 
-    return res.json({ role: snap.data().role });
+    return res.json({ role: snap.data()?.role || "user" });
   } catch (err) {
     return res.status(500).json({ role: "user" });
   }
@@ -285,7 +285,7 @@ app.post("/api/join-queue", verifyToken, allowRoles("user"), async (req, res) =>
 // EXTRA PUBLIC ROUTES
 //---------------------------------------------------------------
 
-app.get("/api/doctors/:id", async (req, res) => {
+app.get("/api/doctors/:id", verifyToken, async (req, res) => {
   try {
     const doc = await Doctor.findById(req.params.id);
     if (!doc) return res.status(404).json({ message: "Doctor not found" });
@@ -295,7 +295,7 @@ app.get("/api/doctors/:id", async (req, res) => {
   }
 });
 
-app.get("/api/queue/:doctorId", async (req, res) => {
+app.get("/api/queue/:doctorId", verifyToken, async (req, res) => {
   try {
     const queue = await Appointment.find({
       doctorId: req.params.doctorId,
