@@ -118,6 +118,28 @@ app.get("/admin/stats", async (req, res) => {
   }
 });
 
+// GET USER ROLE AFTER LOGIN
+app.get("/api/auth/role", async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).json({ role: "guest" });
+
+    // verify firebase token
+    const decoded = await admin.auth().verifyIdToken(token);
+
+    const uid = decoded.uid;
+
+    // get role from Firestore
+    const snap = await admin.firestore().collection("users").doc(uid).get();
+
+    if (!snap.exists)
+      return res.json({ role: "user" }); // fallback
+
+    return res.json({ role: snap.data().role });
+  } catch (err) {
+    return res.status(500).json({ role: "user" });
+  }
+});
 
 //---------------------------------------------------------------
 // USER ROUTES (Protected)
