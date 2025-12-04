@@ -100,6 +100,24 @@ const Doctor = mongoose.model("Doctor", DoctorSchema);
 const Record = mongoose.model("Record", RecordSchema);
 const TokenCounter = mongoose.model("TokenCounter", TokenCounterSchema);
 
+//ADMIN
+// GET /admin/stats
+router.get("/admin/stats", async (req, res) => {
+  try {
+    const doctorCount = await Doctor.countDocuments();
+    const appointmentCount = await Appointment.countDocuments();
+    const recordCount = await Record.countDocuments();
+
+    res.json({
+      doctors: doctorCount,
+      appointments: appointmentCount,
+      records: recordCount,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 //---------------------------------------------------------------
 // USER ROUTES (Protected)
