@@ -315,13 +315,20 @@ app.get("/api/admin/doctors", verifyToken, allowRoles("admin"), async (req, res)
 
 app.post("/api/admin/doctors", verifyToken, allowRoles("admin"), async (req, res) => {
   try {
-    const doc = new Doctor(req.body);
+    const { name, specialization, avgMins } = req.body;
+    if (!name || typeof name !== "string" || !name.trim()) {
+      return res.status(400).json({ message: "Name is required" });
+    }
+
+    const doc = new Doctor({ name: name.trim(), specialization: specialization || "", avgMins: Number(avgMins) || 15 });
     await doc.save();
-    res.json(doc);
+    res.status(201).json(doc);
   } catch (err) {
+    console.error("Create doctor error:", err);
     res.status(500).json({ message: "Failed to create doctor" });
   }
 });
+
 
 app.patch("/api/admin/doctors/:id", verifyToken, allowRoles("admin"), async (req, res) => {
   try {
@@ -343,6 +350,36 @@ app.delete("/api/admin/doctors/:id", verifyToken, allowRoles("admin"), async (re
   }
 });
 
+// GET /api/admin/doctors/:id/stats
+app.get("/api/admin/doctors/:id/stats", verifyToken, allowRoles("admin"), async (req, res) => {
+  try {
+    const doctorId = req.params.id;
+
+    const totalAppointments = await Appointment.countDocuments({ doctorId });
+    const upcoming = await Appointment.countDocuments({ doctorId, status: "upcoming" });
+    const waiting = await Appointment.countDocuments({ doctorId, status: "waiting" });
+    const completed = await Appointment.countDocuments({ doctorId, status: "completed" });
+    const cancelled = await Appointment.countDocuments({ doctorId, status: "cancelled" });
+
+    // find doctor's configured average mins if present
+    const doctor = await Doctor.findById(doctorId);
+
+    res.json({
+      doctorId,
+      name: doctor?.name || null,
+      specialization: doctor?.specialization || null,
+      avgMins: doctor?.avgMins || null,
+      totalAppointments,
+      upcoming,
+      waiting,
+      completed,
+      cancelled,
+    });
+  } catch (err) {
+    console.error("Doctor stats error:", err);
+    res.status(500).json({ message: "Failed to load doctor stats" });
+  }
+});
 
 //---------------------------------------------------------------
 // ADMIN — APPOINTMENTS
