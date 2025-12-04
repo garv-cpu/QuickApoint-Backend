@@ -1,3 +1,4 @@
+//---------------------------------------------------------------
 // server.js
 //---------------------------------------------------------------
 import express from "express";
@@ -5,6 +6,8 @@ import mongoose from "mongoose";
 import cors from "cors";
 import cron from "node-cron";
 import axios from "axios";
+import admin from "firebase-admin";
+
 //---------------------------------------------------------------
 // INIT
 //---------------------------------------------------------------
@@ -19,6 +22,43 @@ mongoose
   .connect(process.env.MONGODB_URI)
   .then(() => console.log("MongoDB Connected"))
   .catch((err) => console.log("Mongo Error", err));
+
+
+//---------------------------------------------------------------
+// FIREBASE ADMIN
+//---------------------------------------------------------------
+admin.initializeApp({
+  credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_ADMIN_KEY)),
+});
+
+// Middleware to verify Firebase ID token
+export async function verifyToken(req, res, next) {
+  const token = req.headers.authorization?.split(" ")[1];
+
+  if (!token) return res.status(401).json({ message: "No token provided" });
+
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+    req.user = decoded; // firebase authenticated user
+    next();
+  } catch (err) {
+    console.log("Token verification failed", err);
+    res.status(401).json({ message: "Invalid token" });
+  }
+}
+
+// Role middleware (Frontend must send x-user-role header)
+export function allowRoles(...roles) {
+  return (req, res, next) => {
+    const role = req.headers["x-user-role"];
+
+    if (!role || !roles.includes(role)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    next();
+  };
+}
 
 
 //---------------------------------------------------------------
@@ -62,13 +102,13 @@ const TokenCounter = mongoose.model("TokenCounter", TokenCounterSchema);
 
 
 //---------------------------------------------------------------
-// ROUTES — USER DASHBOARD
+// USER ROUTES (Protected)
 //---------------------------------------------------------------
 
 /**
  * 1️⃣ Fetch All Appointments (sorted)
  */
-app.get("/api/appointments/:userId", async (req, res) => {
+app.get("/api/appointments/:userId", verifyToken, allowRoles("user"), async (req, res) => {
   try {
     const list = await Appointment.find({ userId: req.params.userId }).sort({
       scheduledAt: 1,
@@ -82,7 +122,7 @@ app.get("/api/appointments/:userId", async (req, res) => {
 /**
  * 2️⃣ Fetch Doctors
  */
-app.get("/api/doctors", async (req, res) => {
+app.get("/api/doctors", verifyToken, async (req, res) => {
   try {
     const docs = await Doctor.find();
     res.json(docs);
@@ -94,7 +134,7 @@ app.get("/api/doctors", async (req, res) => {
 /**
  * 3️⃣ Fetch Medical Records
  */
-app.get("/api/records/:userId", async (req, res) => {
+app.get("/api/records/:userId", verifyToken, allowRoles("user"), async (req, res) => {
   try {
     const recs = await Record.find({ userId: req.params.userId });
     res.json(recs);
@@ -104,9 +144,9 @@ app.get("/api/records/:userId", async (req, res) => {
 });
 
 /**
- * 4️⃣ Create New Appointment (optional)
+ * 4️⃣ Create New Appointment
  */
-app.post("/api/appointments", async (req, res) => {
+app.post("/api/appointments", verifyToken, allowRoles("user"), async (req, res) => {
   try {
     const appt = new Appointment({
       ...req.body,
@@ -122,13 +162,9 @@ app.post("/api/appointments", async (req, res) => {
 /**
  * 5️⃣ Update Appointment
  */
-app.patch("/api/appointments/:id", async (req, res) => {
+app.patch("/api/appointments/:id", verifyToken, allowRoles("user"), async (req, res) => {
   try {
-    const updated = await Appointment.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true }
-    );
+    const updated = await Appointment.findByIdAndUpdate(req.params.id, req.body, { new: true });
     res.json(updated);
   } catch (err) {
     res.status(500).json({ message: "Failed to update appointment" });
@@ -138,7 +174,7 @@ app.patch("/api/appointments/:id", async (req, res) => {
 /**
  * 6️⃣ Cancel Appointment
  */
-app.post("/api/appointments/:id/cancel", async (req, res) => {
+app.post("/api/appointments/:id/cancel", verifyToken, allowRoles("user"), async (req, res) => {
   try {
     const updated = await Appointment.findByIdAndUpdate(
       req.params.id,
@@ -152,61 +188,38 @@ app.post("/api/appointments/:id/cancel", async (req, res) => {
 });
 
 /**
- * 8️⃣ User Dashboard Stats — upcoming | waiting | records | doctors
+ * 7️⃣ Dashboard Stats
  */
-app.get("/api/dashboard-stats/:userId", async (req, res) => {
+app.get("/api/dashboard-stats/:userId", verifyToken, allowRoles("user"), async (req, res) => {
   try {
     const userId = req.params.userId;
 
-    // Count upcoming appointments
-    const upcoming = await Appointment.countDocuments({
-      userId,
-      status: "upcoming",
-    });
-
-    // Count waiting queue appointments
-    const waiting = await Appointment.countDocuments({
-      userId,
-      status: "waiting",
-    });
-
-    // Count medical records for user
+    const upcoming = await Appointment.countDocuments({ userId, status: "upcoming" });
+    const waiting = await Appointment.countDocuments({ userId, status: "waiting" });
     const records = await Record.countDocuments({ userId });
-
-    // Count total doctors (for everyone)
     const doctors = await Doctor.countDocuments();
 
-    return res.json({
-      upcoming,
-      waiting,
-      records,
-      doctors,
-    });
+    res.json({ upcoming, waiting, records, doctors });
   } catch (err) {
-    console.log(err);
     res.status(500).json({ message: "Failed to load dashboard stats" });
   }
 });
 
 /**
- * 7️⃣ Join Queue → Issue Token
+ * 8️⃣ Join Queue → Issue Token
  */
-app.post("/api/join-queue", async (req, res) => {
+app.post("/api/join-queue", verifyToken, allowRoles("user"), async (req, res) => {
   try {
     const { doctorId, userId, displayName } = req.body;
 
     let counter = await TokenCounter.findOne({ doctorId });
-    if (!counter) {
-      counter = new TokenCounter({ doctorId, count: 0 });
-    }
+    if (!counter) counter = new TokenCounter({ doctorId, count: 0 });
 
-    // Issue new token
     counter.count += 1;
     await counter.save();
 
     const token = counter.count;
 
-    // Create appointment entry
     const appt = new Appointment({
       id: Date.now(),
       userId,
@@ -224,11 +237,170 @@ app.post("/api/join-queue", async (req, res) => {
 
     res.json({ token, appointment: appt });
   } catch (err) {
-    console.log(err);
     res.status(500).json({ message: "Failed to join queue" });
   }
 });
 
+//---------------------------------------------------------------
+// EXTRA PUBLIC ROUTES
+//---------------------------------------------------------------
+
+app.get("/api/doctors/:id", async (req, res) => {
+  try {
+    const doc = await Doctor.findById(req.params.id);
+    if (!doc) return res.status(404).json({ message: "Doctor not found" });
+    res.json(doc);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load doctor" });
+  }
+});
+
+app.get("/api/queue/:doctorId", async (req, res) => {
+  try {
+    const queue = await Appointment.find({
+      doctorId: req.params.doctorId,
+      status: "waiting",
+    }).sort({ token: 1, createdAt: 1 });
+
+    res.json(queue);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load queue" });
+  }
+});
+
+app.get("/api/user-tokens/:userId", verifyToken, allowRoles("user"), async (req, res) => {
+  try {
+    const tokens = await Appointment.find({
+      userId: req.params.userId,
+      status: "waiting",
+    }).sort({ createdAt: -1 });
+
+    res.json(tokens);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load user tokens" });
+  }
+});
+
+
+//---------------------------------------------------------------
+// ADMIN — DOCTORS CRUD (Protected)
+//---------------------------------------------------------------
+
+app.get("/api/admin/doctors", verifyToken, allowRoles("admin"), async (req, res) => {
+  try {
+    const docs = await Doctor.find().sort({ name: 1 });
+    res.json(docs);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load doctors" });
+  }
+});
+
+app.post("/api/admin/doctors", verifyToken, allowRoles("admin"), async (req, res) => {
+  try {
+    const doc = new Doctor(req.body);
+    await doc.save();
+    res.json(doc);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to create doctor" });
+  }
+});
+
+app.patch("/api/admin/doctors/:id", verifyToken, allowRoles("admin"), async (req, res) => {
+  try {
+    const updated = await Doctor.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+    });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to update doctor" });
+  }
+});
+
+app.delete("/api/admin/doctors/:id", verifyToken, allowRoles("admin"), async (req, res) => {
+  try {
+    await Doctor.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to delete doctor" });
+  }
+});
+
+
+//---------------------------------------------------------------
+// ADMIN — APPOINTMENTS
+//---------------------------------------------------------------
+
+app.get("/api/admin/appointments", verifyToken, allowRoles("admin"), async (req, res) => {
+  try {
+    const list = await Appointment.find().sort({ createdAt: -1 });
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load appointments" });
+  }
+});
+
+app.patch("/api/admin/appointments/:id/status", verifyToken, allowRoles("admin"), async (req, res) => {
+  try {
+    const updated = await Appointment.findByIdAndUpdate(
+      req.params.id,
+      { status: req.body.status },
+      { new: true }
+    );
+
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to update appointment status" });
+  }
+});
+
+
+//---------------------------------------------------------------
+// ADMIN — RECORDS CRUD
+//---------------------------------------------------------------
+
+app.get("/api/admin/records", verifyToken, allowRoles("admin"), async (req, res) => {
+  try {
+    const recs = await Record.find().sort({ date: -1 });
+    res.json(recs);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load records" });
+  }
+});
+
+app.post("/api/admin/records", verifyToken, allowRoles("admin"), async (req, res) => {
+  try {
+    const record = new Record(req.body);
+    await record.save();
+    res.json(record);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to add record" });
+  }
+});
+
+app.patch("/api/admin/records/:id", verifyToken, allowRoles("admin"), async (req, res) => {
+  try {
+    const updated = await Record.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+    });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to update record" });
+  }
+});
+
+app.delete("/api/admin/records/:id", verifyToken, allowRoles("admin"), async (req, res) => {
+  try {
+    await Record.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to delete record" });
+  }
+});
+
+
+//---------------------------------------------------------------
+// CRON: PING SERVER
+//---------------------------------------------------------------
 cron.schedule("*/10 * * * *", async () => {
   try {
     await axios.get(process.env.RENDER_BACKEND_URL);
@@ -238,42 +410,6 @@ cron.schedule("*/10 * * * *", async () => {
   }
 });
 
-// Fetch single doctor profile
-app.get("/api/doctors/:id", async (req, res) => {
-  try {
-    const doc = await Doctor.findById(req.params.id);
-    if (!doc) return res.status(404).json({ message: "Doctor not found" });
-    res.json(doc);
-  } catch (err) {
-    console.log(err);
-    res.status(500).json({ message: "Failed to load doctor" });
-  }
-});
-
-// Fetch queue (waiting appointments) for a doctor
-app.get("/api/queue/:doctorId", async (req, res) => {
-  try {
-    const doctorId = req.params.doctorId;
-    // waiting appointments ordered by createdAt/token
-    const queue = await Appointment.find({ doctorId, status: "waiting" }).sort({ token: 1, createdAt: 1 });
-    res.json(queue);
-  } catch (err) {
-    console.log(err);
-    res.status(500).json({ message: "Failed to load queue" });
-  }
-});
-
-// Fetch tokens for user (their active waiting token(s))
-app.get("/api/user-tokens/:userId", async (req, res) => {
-  try {
-    const userId = req.params.userId;
-    const tokens = await Appointment.find({ userId, status: "waiting" }).sort({ createdAt: -1 });
-    res.json(tokens);
-  } catch (err) {
-    console.log(err);
-    res.status(500).json({ message: "Failed to load user tokens" });
-  }
-});
 
 //---------------------------------------------------------------
 // SERVER START
