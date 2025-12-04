@@ -152,6 +152,43 @@ app.post("/api/appointments/:id/cancel", async (req, res) => {
 });
 
 /**
+ * 8️⃣ User Dashboard Stats — upcoming | waiting | records | doctors
+ */
+app.get("/api/dashboard-stats/:userId", async (req, res) => {
+  try {
+    const userId = req.params.userId;
+
+    // Count upcoming appointments
+    const upcoming = await Appointment.countDocuments({
+      userId,
+      status: "upcoming",
+    });
+
+    // Count waiting queue appointments
+    const waiting = await Appointment.countDocuments({
+      userId,
+      status: "waiting",
+    });
+
+    // Count medical records for user
+    const records = await Record.countDocuments({ userId });
+
+    // Count total doctors (for everyone)
+    const doctors = await Doctor.countDocuments();
+
+    return res.json({
+      upcoming,
+      waiting,
+      records,
+      doctors,
+    });
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ message: "Failed to load dashboard stats" });
+  }
+});
+
+/**
  * 7️⃣ Join Queue → Issue Token
  */
 app.post("/api/join-queue", async (req, res) => {
@@ -198,6 +235,43 @@ cron.schedule("*/10 * * * *", async () => {
     console.log("🔥 Cron Ping Sent To Keep Server Awake");
   } catch (err) {
     console.log("Cron Ping Failed", err.message);
+  }
+});
+
+// Fetch single doctor profile
+app.get("/api/doctors/:id", async (req, res) => {
+  try {
+    const doc = await Doctor.findById(req.params.id);
+    if (!doc) return res.status(404).json({ message: "Doctor not found" });
+    res.json(doc);
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ message: "Failed to load doctor" });
+  }
+});
+
+// Fetch queue (waiting appointments) for a doctor
+app.get("/api/queue/:doctorId", async (req, res) => {
+  try {
+    const doctorId = req.params.doctorId;
+    // waiting appointments ordered by createdAt/token
+    const queue = await Appointment.find({ doctorId, status: "waiting" }).sort({ token: 1, createdAt: 1 });
+    res.json(queue);
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ message: "Failed to load queue" });
+  }
+});
+
+// Fetch tokens for user (their active waiting token(s))
+app.get("/api/user-tokens/:userId", async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const tokens = await Appointment.find({ userId, status: "waiting" }).sort({ createdAt: -1 });
+    res.json(tokens);
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ message: "Failed to load user tokens" });
   }
 });
 
