@@ -102,7 +102,7 @@ const TokenCounter = mongoose.model("TokenCounter", TokenCounterSchema);
 
 //ADMIN
 // GET /admin/stats
-router.get("/admin/stats", async (req, res) => {
+app.get("/admin/stats", async (req, res) => {
   try {
     const doctorCount = await Doctor.countDocuments();
     const appointmentCount = await Appointment.countDocuments();
